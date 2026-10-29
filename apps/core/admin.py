@@ -15,6 +15,7 @@ class RestaurantSettingsAdmin(admin.ModelAdmin):
         ("Coordonnées", {"fields": ["name", "phone", "whatsapp", "email", "address", "maps_url"]}),
         ("Horaires", {"fields": ["opening_hours"]}),
         ("Réservations", {"fields": ["reservation_slot_minutes", "reservation_max_party", "reservation_covers_per_slot"]}),
+        ("Traiteur", {"fields": ["catering_min_guests"]}),
         ("Mentions légales (reçus)", {"fields": ["rccm", "ncc", "vat_rate"], "classes": ["collapse"]}),
     ]
 

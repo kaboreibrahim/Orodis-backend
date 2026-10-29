@@ -21,6 +21,9 @@ SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=3600)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = False
 
+# URL publique des photos, même si Next.js appelle l'API par son adresse interne
+MEDIA_URL = env("PUBLIC_MEDIA_URL")
+
 # WhiteNoise : statiques compressés et versionnés
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},

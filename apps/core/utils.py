@@ -1,3 +1,4 @@
+import re
 from io import BytesIO
 
 from django.core.exceptions import ValidationError
@@ -5,6 +6,7 @@ from django.core.files.base import ContentFile
 from django.utils.deconstruct import deconstructible
 from django.utils.text import slugify
 from PIL import Image, ImageOps
+from rest_framework.exceptions import ValidationError as DRFValidationError
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PX = 1200
@@ -30,6 +32,20 @@ class PhotoPath:
 
     def __call__(self, instance, filename):
         return f"{self.folder}/{instance.slug}.webp"
+
+
+def normalize_ci_phone(value, field="phone"):
+    """'07 07 07 07 07', '+225 0707070707', '002250707070707' -> '+2250707070707'."""
+    digits = re.sub(r"[\s.\-()]", "", value or "")
+    if digits.startswith("+225"):
+        digits = digits[4:]
+    elif digits.startswith("00225"):
+        digits = digits[5:]
+    elif digits.startswith("225") and len(digits) == 13:
+        digits = digits[3:]
+    if not (len(digits) == 10 and digits.isdigit()):
+        raise DRFValidationError({field: ["Numéro ivoirien à 10 chiffres attendu, ex. 07 07 07 07 07."]})
+    return f"+225{digits}"
 
 
 def validate_image_size(file):

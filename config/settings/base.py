@@ -14,6 +14,12 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 
+# Secret partagé avec le serveur Next.js (X-Frontend-Key) ; vide = X-Client-IP ignoré
+FRONTEND_API_KEY = env("FRONTEND_API_KEY", default="")
+
+# Adresse du site Next.js : sert aux QR des tables (/t/<jeton>)
+PUBLIC_SITE_URL = env("PUBLIC_SITE_URL", default="http://localhost:3000").rstrip("/")
+
 # Admin déplacé hors de /admin/ (ex. "gestion-orodis/")
 ADMIN_URL = env("ADMIN_URL", default="admin/")
 
@@ -36,6 +42,9 @@ INSTALLED_APPS = [
     "apps.core",
     "apps.accounts",
     "apps.menu",
+    "apps.tables",
+    "apps.reservations",
+    "apps.catering",
 ]
 
 MIDDLEWARE = [
@@ -126,11 +135,13 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.ScopedRateThrottle",
+        "apps.core.throttling.AnonRateThrottle",
+        "apps.core.throttling.ScopedRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/min",
+        "reservations": "5/hour",
+        "quotes": "5/hour",
         # Les limites des POST publics (réservations, devis) seront ajoutées avec leurs apps
     },
 }
@@ -147,6 +158,10 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Carte, réservations et devis traiteur.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "ENUM_NAME_OVERRIDES": {
+        "ReservationStatusEnum": "apps.reservations.models.Reservation.Status",
+        "QuoteStatusEnum": "apps.catering.models.QuoteRequest.Status",
+    },
 }
 
 # E-mail (Brevo ou Gmail)

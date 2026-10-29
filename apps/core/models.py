@@ -37,6 +37,9 @@ class RestaurantSettings(TimeStampedModel):
         "taille maximale d'un groupe", default=12, help_text="Au-delà, le client est renvoyé vers le traiteur."
     )
     reservation_covers_per_slot = models.PositiveSmallIntegerField("couverts maximum par créneau", default=40)
+    catering_min_guests = models.PositiveSmallIntegerField(
+        "nombre minimum d'invités pour un devis", default=20
+    )
 
     rccm = models.CharField("RCCM", max_length=50, blank=True)
     ncc = models.CharField("NCC", max_length=50, blank=True)
