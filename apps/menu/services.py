@@ -4,6 +4,8 @@ from django.core.cache import cache
 from django.db import transaction
 from rest_framework.renderers import JSONRenderer
 
+from apps.core.services import notify_frontend_revalidate
+
 from .selectors import public_menu
 from .serializers import CategorySerializer
 
@@ -26,6 +28,7 @@ def get_public_menu(request):
 def invalidate_menu_cache():
     """Appelé à chaque modification de la carte, après validation de la transaction."""
     transaction.on_commit(_bump_menu_version)
+    notify_frontend_revalidate(["menu"])
 
 
 def _menu_version():

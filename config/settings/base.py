@@ -17,6 +17,10 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 # Secret partagé avec le serveur Next.js (X-Frontend-Key) ; vide = X-Client-IP ignoré
 FRONTEND_API_KEY = env("FRONTEND_API_KEY", default="")
 
+# Revalidation du cache Next.js (route du site qui appelle revalidateTag) ; URL vide = désactivé
+FRONTEND_REVALIDATE_URL = env("FRONTEND_REVALIDATE_URL", default="")
+REVALIDATE_SECRET = env("REVALIDATE_SECRET", default="")
+
 # Adresse du site Next.js : sert aux QR des tables (/t/<jeton>)
 PUBLIC_SITE_URL = env("PUBLIC_SITE_URL", default="http://localhost:3000").rstrip("/")
 

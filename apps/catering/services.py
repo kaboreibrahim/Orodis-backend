@@ -12,6 +12,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.renderers import JSONRenderer
 
 from apps.core.models import RestaurantSettings
+from apps.core.services import notify_frontend_revalidate
 from apps.core.utils import normalize_ci_phone
 
 from .models import QuoteRequest
@@ -37,6 +38,7 @@ def get_public_formulas():
 
 def invalidate_formulas_cache():
     transaction.on_commit(lambda: cache.delete(FORMULAS_CACHE_KEY))
+    notify_frontend_revalidate(["catering"])
 
 
 # --- Demandes de devis --------------------------------------------------------------------
