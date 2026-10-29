@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: orodis
+      POSTGRES_USER: orodis
+      POSTGRES_PASSWORD: orodis
+    ports:
+      - "5433:5432"  # 5433 : votre PostgreSQL local occupe déjà 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: .
+    entrypoint: []
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      SECRET_KEY: dev-docker-non-secret
+      DATABASE_URL: postgres://orodis:orodis@postgres:5432/orodis
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app  # le code local est monté : rechargement automatique
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
