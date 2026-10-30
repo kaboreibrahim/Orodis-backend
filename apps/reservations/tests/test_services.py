@@ -108,6 +108,7 @@ def test_saisie_par_le_personnel_confirmee_et_forcee(restaurant, day, manager):
     assert (r.status, r.source, r.handled_by) == ("confirmed", "phone", manager)
 
 
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="SQLite ne verrouille pas les lignes")
 @pytest.mark.django_db(transaction=True)
 def test_deux_reservations_simultanees(restaurant, day):
     """6 + 6 > 10 couverts : une seule des deux demandes lancées en même temps doit passer."""
