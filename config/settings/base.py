@@ -28,7 +28,6 @@ PUBLIC_SITE_URL = env("PUBLIC_SITE_URL", default="http://localhost:3000").rstrip
 ADMIN_URL = env("ADMIN_URL", default="admin/")
 
 INSTALLED_APPS = [
-    "daphne",  # en premier : runserver passe en ASGI, prêt pour Channels (phase 3)
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -49,7 +48,12 @@ INSTALLED_APPS = [
     "apps.tables",
     "apps.reservations",
     "apps.catering",
+    "apps.orders",
+    "apps.payments",
 ]
+
+# Fournisseur de paiement (apps/payments/providers.py) : « manual » tant qu'aucun agrégateur n'est choisi
+PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", default="manual")
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -66,7 +70,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
-ASGI_APPLICATION = "config.asgi.application"
 
 TEMPLATES = [
     {
@@ -86,10 +89,11 @@ TEMPLATES = [
 DATABASES = {"default": env.db("DATABASE_URL")}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Cache en base (python manage.py createcachetable) : partagé par tous les processus Passenger
 CACHES = {
     "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": env("REDIS_URL", default="redis://localhost:6379/0"),
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "orodis_cache",
     }
 }
 
@@ -146,6 +150,14 @@ REST_FRAMEWORK = {
         "anon": "60/min",
         "reservations": "5/hour",
         "quotes": "5/hour",
+        # Connexion du personnel, en plus du verrouillage django-axes après 5 échecs
+        "login": "10/min",
+        # Téléphone d'une table (routes /table/), compté par session : écritures (commandes, appels)
+        "table": "30/min",
+        # … et lectures (session, suivi, reçus), partagées par tous les téléphones de la table
+        "table_read": "120/min",
+        # … et polling des événements (un appel toutes les 4 s par téléphone)
+        "table_events": "240/min",
         # Les limites des POST publics (réservations, devis) seront ajoutées avec leurs apps
     },
 }
@@ -159,12 +171,16 @@ SIMPLE_JWT = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "API Les Délices d'Orodis",
-    "DESCRIPTION": "Carte, réservations et devis traiteur.",
+    "DESCRIPTION": "Carte, réservations, devis traiteur, tables et connexion du personnel.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "ENUM_NAME_OVERRIDES": {
         "ReservationStatusEnum": "apps.reservations.models.Reservation.Status",
         "QuoteStatusEnum": "apps.catering.models.QuoteRequest.Status",
+        "OrderStatusEnum": "apps.orders.models.Order.Status",
+        "TableSessionStatusEnum": "apps.orders.models.TableSession.Status",
+        "ServiceRequestStatusEnum": "apps.orders.models.ServiceRequest.Status",
+        "PaymentMethodEnum": "apps.orders.models.Order.PaymentMethod",
     },
 }
 

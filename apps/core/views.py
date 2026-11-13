@@ -10,7 +10,7 @@ from .serializers import PublicSettingsSerializer
 
 
 class HealthCheckView(APIView):
-    """Utilisé par Coolify : 200 si la base et Redis répondent, 503 sinon."""
+    """Surveillance du site : 200 si la base et le cache répondent, 503 sinon."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -18,7 +18,7 @@ class HealthCheckView(APIView):
 
     @extend_schema(exclude=True)
     def get(self, request):
-        checks = {"database": _check_database(), "redis": _check_redis()}
+        checks = {"database": _check_database(), "cache": _check_cache()}
         healthy = all(value == "ok" for value in checks.values())
         return Response({"status": "ok" if healthy else "erreur", **checks}, status=200 if healthy else 503)
 
@@ -44,7 +44,7 @@ def _check_database():
         return "erreur"
 
 
-def _check_redis():
+def _check_cache():
     try:
         cache.set("health_check", "ok", 5)
         return "ok" if cache.get("health_check") == "ok" else "erreur"

@@ -59,3 +59,22 @@ class CategorySerializer(serializers.ModelSerializer):
         # Une sous-catégorie sans plat disponible n'est pas affichée
         subs = [s for s in category.subcategories.all() if s.dishes.all()]
         return SubCategorySerializer(subs, many=True, context=self.context).data
+
+
+class DishAvailabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Dish
+        fields = ["id", "name", "is_available"]
+        read_only_fields = ["id", "name"]
+        extra_kwargs = {"is_available": {"required": True}}
+
+
+class StaffDishSerializer(serializers.ModelSerializer):
+    """Plat vu par le personnel (écran cuisine, ruptures) : disponible ou non, avec sa place dans la carte."""
+
+    category = serializers.CharField(source="subcategory.category.name", read_only=True)
+    subcategory = serializers.CharField(source="subcategory.name", read_only=True)
+
+    class Meta:
+        model = Dish
+        fields = ["id", "name", "category", "subcategory", "is_available"]

@@ -8,8 +8,9 @@ Architecture : [docs/architecture.md](docs/architecture.md).
 ```bash
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements/dev.txt
-cp .env.example .env   # puis renseigner SECRET_KEY, DATABASE_URL, REDIS_URL
+cp .env.example .env   # puis renseigner SECRET_KEY, DATABASE_URL
 python manage.py migrate
+python manage.py createcachetable
 python manage.py runserver
 ```
 
@@ -26,7 +27,7 @@ il est ignoré sur SQLite, qui ne verrouille pas les lignes.
 ### Lancer les tests sur le PostgreSQL de docker-compose.dev.yml
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d postgres redis
+docker compose -f docker-compose.dev.yml up -d postgres
 ```
 
 PowerShell :
@@ -45,3 +46,7 @@ DATABASE_URL=postgres://orodis:orodis@127.0.0.1:5433/orodis pytest
 
 Le port 5433 évite le PostgreSQL local déjà installé sur 5432. La variable d'environnement
 l'emporte sur `.env`. L'utilisateur `orodis` du conteneur peut créer la base de test.
+
+## Déploiement
+
+LWS cPanel (Passenger, sans Docker ni Redis) : voir [docs/deploiement-lws.md](docs/deploiement-lws.md).

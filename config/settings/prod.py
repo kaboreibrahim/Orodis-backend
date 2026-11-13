@@ -5,14 +5,9 @@ from .base import env
 
 DEBUG = False
 
-# Le health check de Coolify tourne dans le conteneur et appelle localhost:8000
-ALLOWED_HOSTS = [*ALLOWED_HOSTS, "localhost", "127.0.0.1"]  # noqa: F405
-
-# HTTPS : Coolify termine le TLS et transmet X-Forwarded-Proto
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-SECURE_SSL_REDIRECT = True
-# Le health check de Coolify appelle le conteneur en HTTP direct : pas de redirection
-SECURE_REDIRECT_EXEMPT = [r"^api/v1/health/$"]
+# Passenger transmet lui-même le HTTPS à Django : pas de SECURE_PROXY_SSL_HEADER.
+# Si « Forcer HTTPS » est déjà activé dans cPanel et que le site boucle en redirections, mettre false.
+SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
@@ -37,6 +32,7 @@ LOGGING = {
         "simple": {"format": "{asctime} {levelname} {name} : {message}", "style": "{"},
     },
     "handlers": {
+        # Passenger écrit la sortie d'erreur dans stderr.log, à la racine de l'application
         "console": {"class": "logging.StreamHandler", "formatter": "simple"},
     },
     "root": {"handlers": ["console"], "level": "INFO"},

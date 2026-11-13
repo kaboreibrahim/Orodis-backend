@@ -6,18 +6,19 @@
 
 Un seul projet Django sert d'API à toutes les interfaces : le site vitrine Next.js, l'app de commande par QR, l'écran cuisine et le tableau de bord du gérant. La phase 2 (5 – 11 nov) livre le socle, la carte, les réservations et les demandes de devis. Les apps commandes, temps réel et paiement sont prévues dès maintenant dans l'arborescence, mais codées en phases 3 et 4.
 
-Les interfaces ne parlent qu'à l'API ; seule l'API touche la base, Redis et les fichiers.
+Les interfaces ne parlent qu'à l'API ; seule l'API touche la base et les fichiers.
 
 | Couche | Choix | Rôle |
 | --- | --- | --- |
 | Langage | Python 3.12, Django 5.1 | Modèles, admin, logique métier |
 | API | Django REST Framework 3.15 + drf-spectacular | Endpoints JSON, documentation Swagger sur /api/docs/ |
 | Base de données | PostgreSQL 16 | Données de production |
-| Cache et file | Redis 7 | Cache de la carte (phase 2), canal temps réel Django Channels (phase 3) |
-| Serveur | Daphne (ASGI) | Sert HTTP et, plus tard, WebSocket avec le même processus |
-| Fichiers | WhiteNoise (statiques), volume Docker /media (photos des plats) | Pas de service S3 nécessaire au départ |
+| Cache | `DatabaseCache` (table `orodis_cache`) | Cache de la carte, compteurs de throttling, partagés par tous les processus |
+| Temps réel | Polling REST sur la table `orders.Event` | Les écrans relisent les événements toutes les 3 à 5 s (pas de WebSocket chez LWS) |
+| Serveur | Passenger (WSGI, `passenger_wsgi.py`) | Lancé par « Setup Python App » de cPanel |
+| Fichiers | WhiteNoise (statiques), dossier `media/` de l'application (photos des plats) | Pas de service S3 nécessaire au départ |
 | Authentification | JWT (djangorestframework-simplejwt) | Connexion du gérant et du personnel depuis Next.js |
-| Hébergement | Contabo Cloud VPS 4 + Coolify | Un service Django, un Next.js, un PostgreSQL, un Redis |
+| Hébergement | LWS cPanel (mutualisé) | Ni Docker ni Redis ; PostgreSQL de cPanel ; tâches planifiées en cron cPanel |
 
 Le site public n'a jamais de compte client : il lit la carte et envoie des réservations ou des devis sans connexion. Seul le personnel se connecte.
 
@@ -35,8 +36,8 @@ backend/                     # = racine du dépôt Orodis_backend
 │   │   ├── dev.py           # DEBUG, SQLite ou Postgres local
 │   │   └── prod.py          # sécurité, WhiteNoise, logs
 │   ├── urls.py              # /admin/, /api/v1/, /api/docs/
-│   ├── asgi.py              # Daphne (+ Channels en phase 3)
-│   └── wsgi.py
+│   ├── asgi.py              # non utilisé chez LWS
+│   └── wsgi.py              # servi par Passenger
 ├── apps/
 │   ├── core/                # modèle de base horodaté, réglages du restaurant, permissions, utilitaires
 │   ├── accounts/            # utilisateur personnalisé + rôles
@@ -51,8 +52,8 @@ backend/                     # = racine du dépôt Orodis_backend
 │   ├── base.txt
 │   ├── dev.txt              # pytest, factory-boy, ruff
 │   └── prod.txt
-├── Dockerfile
-├── entrypoint.sh            # migrate, collectstatic, daphne
+├── passenger_wsgi.py        # point d'entrée de Passenger (LWS cPanel)
+├── docker-compose.dev.yml   # développement seulement : PostgreSQL local pour les tests
 ├── manage.py
 └── .env.example
 ```
@@ -167,7 +168,7 @@ Toutes les routes sont préfixées par `/api/v1/`. Les routes publiques ne deman
 | POST | /catering/quotes/ | Crée une demande de devis, renvoie sa référence et le lien WhatsApp pré-rempli |
 | GET | /tables/resolve/{qr_token}/ | Phase 3 : renvoie le numéro de table d'un QR, 404 si inactif ou régénéré |
 
-`/menu/` est mis en cache Redis 10 minutes ; le cache est vidé par un signal `post_save` / `post_delete` sur les modèles de la carte, pour qu'une modification du gérant apparaisse tout de suite.
+`/menu/` est mis en cache (en base) 10 minutes ; le cache est vidé par un signal `post_save` / `post_delete` sur les modèles de la carte, pour qu'une modification du gérant apparaisse tout de suite.
 
 ### Routes du personnel
 
@@ -256,18 +257,18 @@ Permissions DRF dans `core/permissions.py` : `IsStaffRole`, `IsManager`, et `Has
 
 ### Réglages de sécurité (prod.py)
 
-- `DEBUG = False`, `SECRET_KEY` et mots de passe uniquement dans les variables d'environnement Coolify.
+- `DEBUG = False`, `SECRET_KEY` et mots de passe uniquement dans le `.env` du serveur (hors du dossier public).
 - `ALLOWED_HOSTS` et `CSRF_TRUSTED_ORIGINS` limités aux domaines du restaurant ; `CORS_ALLOWED_ORIGINS` = le seul domaine Next.js (django-cors-headers).
-- `SECURE_PROXY_SSL_HEADER` (Coolify termine le HTTPS), `SECURE_SSL_REDIRECT`, cookies `Secure`, HSTS.
+- HTTPS transmis par Passenger (pas de `SECURE_PROXY_SSL_HEADER`), `SECURE_SSL_REDIRECT` réglable par variable, cookies `Secure`, HSTS.
 - JWT : accès 30 min, rafraîchissement 7 jours avec rotation et liste noire (`rest_framework_simplejwt.token_blacklist`).
 - Admin Django déplacé hors de `/admin/` (ex. `/gestion-orodis/`) et protégé par django-axes (verrouillage après 5 échecs).
 - Throttling DRF : `anon` 60/min, plus les limites dédiées aux POST publics (réservations, devis).
 - Fichiers envoyés : images seulement, 5 Mo maximum, vérifiées par Pillow.
 - Le numéro de téléphone et le nom du client ne sont jamais renvoyés par une route publique.
 
-## Configuration, Docker et déploiement
+## Configuration et déploiement
 
-Le backend tourne dans une image Docker unique, déployée par Coolify depuis le dépôt GitHub ; PostgreSQL et Redis sont des services Coolify à part. Le détail du serveur est dans le guide de déploiement déjà rédigé.
+Le backend tourne chez LWS cPanel, servi par Passenger (« Setup Python App ») depuis une copie du dépôt GitHub ; la base est un PostgreSQL créé dans cPanel. Pas de Docker, pas de Redis, pas de WebSocket. Le pas à pas est dans [deploiement-lws.md](deploiement-lws.md).
 
 ### Variables d'environnement (.env.example)
 
@@ -277,8 +278,8 @@ SECRET_KEY=
 ALLOWED_HOSTS=api.delicesdorodis.ci
 CSRF_TRUSTED_ORIGINS=https://api.delicesdorodis.ci
 CORS_ALLOWED_ORIGINS=https://delicesdorodis.ci
-DATABASE_URL=postgres://orodis:motdepasse@postgres:5432/orodis
-REDIS_URL=redis://redis:6379/0
+DATABASE_URL=postgres://compte_orodis:motdepasse@localhost:5432/compte_orodis
+SECURE_SSL_REDIRECT=true
 EMAIL_HOST=smtp-relay.brevo.com
 EMAIL_HOST_USER=
 EMAIL_HOST_PASSWORD=
@@ -299,56 +300,29 @@ drf-spectacular~=0.27
 django-cors-headers~=4.4
 django-environ~=0.11
 django-filter~=24.3
-django-redis~=5.4
 django-axes~=6.5
 psycopg[binary]~=3.2
 Pillow~=11.0
 qrcode[pil]~=8.0
 reportlab~=4.2
-daphne~=4.1
 whitenoise~=6.7
 sentry-sdk~=2.17
 ```
 
-Phase 3 ajoutera `channels` et `channels-redis`.
+### Chez LWS
 
-### Dockerfile
-
-```
-FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends libjpeg62-turbo zlib1g && rm -rf /var/lib/apt/lists/*
-COPY requirements/ requirements/
-RUN pip install --no-cache-dir -r requirements/prod.txt
-COPY . .
-RUN useradd -m app && chown -R app /app
-USER app
-EXPOSE 8000
-ENTRYPOINT ["./entrypoint.sh"]
-```
-
-### entrypoint.sh
-
-```
-#!/bin/sh
-set -e
-python manage.py migrate --noinput
-python manage.py collectstatic --noinput
-exec daphne -b 0.0.0.0 -p 8000 config.asgi:application
-```
-
-### Dans Coolify
-
-- Application « orodis-api » : build Dockerfile, dossier racine du dépôt (`/`), port 8000, domaine `api.…`, volume persistant monté sur `/app/media`.
-- Health check sur `GET /api/v1/health/` (renvoie 200 si la base et Redis répondent).
-- Sauvegarde quotidienne de PostgreSQL activée dans Coolify, vers un stockage S3.
-- En local : un `docker-compose.dev.yml` avec postgres, redis et le backend en `runserver`.
+- Application Python « orodis-api » sur le sous-domaine `api.…`, point d'entrée `passenger_wsgi.py`, certificat SSL de cPanel.
+- Après chaque mise à jour : `migrate`, `createcachetable`, `collectstatic`, puis redémarrage de l'application.
+- Cron cPanel : `close_idle_sessions` toutes les heures, `purge_events` chaque nuit.
+- `GET /api/v1/health/` renvoie 200 si la base et le cache répondent (pour une surveillance externe).
+- Sauvegarde de PostgreSQL : sauvegardes automatiques LWS, plus un `pg_dump` par cron si besoin.
+- En local : `docker-compose.dev.yml` ne lance qu'un PostgreSQL pour les tests.
 
 ### Commandes de gestion utiles
 
 - `python manage.py seed_menu` : charge la carte de démonstration des maquettes (Kedjenou 4 500 F, Garba spécial 3 500 F…) pour développer avant d'avoir la vraie carte.
 - `python manage.py create_tables --zone Salle --from 1 --to 8` : crée les tables et leurs jetons QR.
+- `python manage.py close_idle_sessions` et `python manage.py purge_events` : tâches planifiées (cron cPanel).
 
 ## Ordre de développement et suite
 
@@ -366,7 +340,7 @@ En 7 jours, cet ordre fait arriver la première réservation du site chez le gé
 
 ### Ce que la phase 2 prépare pour la suite
 
-- **Phase 3 (commandes QR, temps réel)** : app `orders` avec `Order` (table, statut, total) et `OrderItem` (plat, options choisies, prix figé au moment de la commande). Django Channels sur le même Daphne : un groupe WebSocket `kitchen` et un groupe `table_<id>`, alimentés par `services.py` après chaque changement de statut.
+- **Phase 3 (commandes QR, temps réel)** : app `orders` avec `Order` (table, statut, total) et `OrderItem` (plat, options choisies, prix figé au moment de la commande). Temps réel par polling : `services.py` écrit un `Event` après chaque changement de statut, et les écrans (cuisine, gestion, téléphone de la table) le relisent par `?after=<curseur>`.
 - **Phase 3 (reçus)** : numérotation `R-000208` par séquence PostgreSQL, PDF A4 et ticket 80 mm générés par ReportLab à partir des `RestaurantSettings` (RCCM, NCC, TVA).
 - **Phase 4 (paiement)** : app `payments` derrière une interface `PaymentProvider` (initier, vérifier, webhook), pour brancher l'agrégateur choisi (Wave, Orange Money, MTN MoMo) sans toucher aux commandes. [Agrégateur à choisir avec le client.]
 

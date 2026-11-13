@@ -15,4 +15,5 @@ L'architecture complète (modèles, routes, règles métier, déploiement) est d
 
 ## Stack
 
-Python 3.12, Django 5.1, DRF 3.15, PostgreSQL 16, Redis 7, Daphne, JWT (simplejwt). Dépendances dans `requirements/` (base, dev, prod).
+Python 3.12, Django 5.1, DRF 3.15, PostgreSQL 16, JWT (simplejwt). Dépendances dans `requirements/` (base, dev, prod).
+Hébergement LWS cPanel (Passenger WSGI) : ni Docker, ni Redis, ni WebSocket. Cache en base (`DatabaseCache`), temps réel par polling sur `orders.Event` ([docs/deploiement-lws.md](docs/deploiement-lws.md)).

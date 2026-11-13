@@ -14,7 +14,7 @@ MENU_VERSION_KEY = "menu:version"
 
 
 def get_public_menu(request):
-    """Carte publique complète, servie depuis Redis (10 min) ou reconstruite."""
+    """Carte publique complète, servie depuis le cache (10 min) ou reconstruite."""
     key = f"menu:public:v{_menu_version()}:{request.get_host()}"
     data = cache.get(key)
     if data is None:
@@ -23,6 +23,17 @@ def get_public_menu(request):
         data = json.loads(JSONRenderer().render([c for c in categories if c["subcategories"]]))
         cache.set(key, data, MENU_CACHE_TTL)
     return data
+
+
+def set_dish_availability(dish, is_available):
+    """Rupture de stock ou retour d'un plat ; l'enregistrement vide le cache de la carte (signal post_save)."""
+    if dish.is_available != is_available:
+        dish.is_available = is_available
+        dish.save(update_fields=["is_available", "updated_at"])
+        from apps.orders import events  # import local : la carte ne dépend des commandes que pour prévenir les écrans
+
+        transaction.on_commit(lambda: events.dish_availability(dish))
+    return dish
 
 
 def invalidate_menu_cache():
@@ -38,5 +49,5 @@ def _menu_version():
 def _bump_menu_version():
     try:
         cache.incr(MENU_VERSION_KEY)
-    except ValueError:  # clé absente (Redis vidé)
+    except ValueError:  # clé absente (cache vidé)
         cache.set(MENU_VERSION_KEY, 2, timeout=None)
