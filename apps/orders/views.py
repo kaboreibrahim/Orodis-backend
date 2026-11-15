@@ -1,5 +1,6 @@
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_date
 from django_filters import rest_framework as filters
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -11,14 +12,14 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import HasRole, IsStaffRole
+from apps.core.permissions import HasRole, IsManager, IsStaffRole
 from apps.tables.models import Table
 
 from . import printing, selectors, services
 from .authentication import HasTableSession, TableEventsThrottle, TableSessionAuthentication, TableSessionThrottle
 from .models import Order, ServiceRequest, TableSession
 from .serializers import (
-    CancelOrderSerializer, EventSerializer, EventsSerializer, OpenSessionSerializer, OpenSessionSummarySerializer, PaySerializer, PlaceOrderSerializer,
+    CancelOrderSerializer, DashboardSerializer, EventSerializer, PaymentsSerializer, EventsSerializer, OpenSessionSerializer, OpenSessionSummarySerializer, PaySerializer, PlaceOrderSerializer,
     ReceiptSerializer, ServiceRequestInputSerializer, StaffReceiptSerializer, ServiceRequestSerializer, SessionOpenedSerializer,
     SessionStateSerializer, StaffOrderSerializer, StaffPlaceOrderSerializer, StaffServiceRequestSerializer,
     TableOrderSerializer,
@@ -276,3 +277,32 @@ class StaffReceiptPdfView(StaffReceiptView):
     @extend_schema(responses={(200, "application/pdf"): OpenApiTypes.BINARY}, summary="Reçu (PDF A4)")
     def get(self, request, number):
         return _pdf_response(_receipt_or_404(number))
+
+
+class StaffDashboardView(APIView):
+    """Vue d'ensemble du gérant : chiffres de la période, 7 derniers jours, état de la salle."""
+
+    permission_classes = [IsManager]
+
+    @extend_schema(parameters=[OpenApiParameter("period", str, enum=list(selectors.PERIOD_DAYS), description="today (défaut), week (7 jours) ou month (30 jours).")],
+                   responses=DashboardSerializer, summary="Tableau de bord du gérant")
+    def get(self, request):
+        period = request.query_params.get("period", "today")
+        if period not in selectors.PERIOD_DAYS:
+            return Response({"period": ["Période inconnue : today, week ou month."]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(DashboardSerializer(selectors.dashboard(period)).data)
+
+
+class StaffPaymentsView(APIView):
+    """Paiements d'une journée : reçus, totaux par moyen de paiement, reste à encaisser."""
+
+    permission_classes = [HasRole("cashier", "manager")]
+
+    @extend_schema(parameters=[OpenApiParameter("date", OpenApiTypes.DATE, description="Jour voulu (AAAA-MM-JJ), aujourd'hui par défaut.")],
+                   responses=PaymentsSerializer, summary="Paiements du jour (caisse, gérant)")
+    def get(self, request):
+        raw = request.query_params.get("date")
+        day = parse_date(raw) if raw else None
+        if raw and day is None:
+            return Response({"date": ["Date attendue au format AAAA-MM-JJ."]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(PaymentsSerializer(selectors.payments(day)).data)

@@ -10,7 +10,7 @@ from apps.core.permissions import IsManager
 
 from . import printing, services
 from .models import Table, Zone
-from .serializers import TableSerializer, ZoneSerializer
+from .serializers import TableRangeSerializer, TableSerializer, ZoneSerializer
 
 
 class ZoneViewSet(viewsets.ModelViewSet):
@@ -36,11 +36,35 @@ class TableViewSet(viewsets.ModelViewSet):
     filterset_fields = ["zone", "is_active", "number"]
     queryset = Table.objects.select_related("zone")
 
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "Cette table a déjà reçu des clients : elle ne peut pas être supprimée. Désactivez-la pour la retirer du service."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     @extend_schema(request=None, responses=TableSerializer, summary="Nouveau QR : l'ancien chevalet ne fonctionne plus")
     @action(detail=True, methods=["post"], url_path="regenerate-qr")
     def regenerate_qr(self, request, pk=None):
         table = services.regenerate_qr(self.get_object())
         return Response(TableSerializer(table).data)
+
+    @extend_schema(request=TableRangeSerializer, responses={201: TableSerializer(many=True)},
+                   summary="Créer plusieurs tables d'un coup (tout ou rien)")
+    @action(detail=False, methods=["post"], url_path="bulk")
+    def bulk(self, request):
+        serializer = TableRangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            tables = services.create_range(**serializer.validated_data)
+        except services.NumbersTaken as error:
+            numbers = ", ".join(str(n) for n in error.numbers)
+            message = (f"La table {numbers} existe déjà." if len(error.numbers) == 1
+                       else f"Les tables {numbers} existent déjà.")
+            return Response({"first": [f"{message} Choisissez un autre numéro de départ."]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(TableSerializer(tables, many=True).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(responses={(200, "image/png"): OpenApiTypes.BINARY}, summary="QR de la table (PNG)")
     def qr_png(self, request, pk=None):

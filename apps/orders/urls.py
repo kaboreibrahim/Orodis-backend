@@ -22,5 +22,7 @@ manage_urlpatterns = [
     path("receipts/<int:number>/", views.StaffReceiptView.as_view(), name="manage-receipt"),
     path("receipts/<int:number>.pdf", views.StaffReceiptPdfView.as_view(), name="manage-receipt-pdf"),
     path("events/", views.StaffEventsView.as_view(), name="manage-events"),
+    path("dashboard/", views.StaffDashboardView.as_view(), name="manage-dashboard"),
+    path("payments/", views.StaffPaymentsView.as_view(), name="manage-payments"),
     *router.urls,
 ]

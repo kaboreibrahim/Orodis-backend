@@ -222,3 +222,94 @@ class EventSerializer(serializers.ModelSerializer):
 class EventsSerializer(serializers.Serializer):
     cursor = serializers.IntegerField(help_text="À renvoyer dans ?after= au prochain appel.")
     events = EventSerializer(many=True)
+
+
+# --- Tableau de bord du gérant ---
+
+class SalesSerializer(serializers.Serializer):
+    revenue = serializers.IntegerField(help_text="Encaissé sur la période (FCFA).")
+    receipts_count = serializers.IntegerField()
+    orders_count = serializers.IntegerField(help_text="Commandes passées, hors annulations.")
+    cancelled_count = serializers.IntegerField()
+    average_ticket = serializers.IntegerField(help_text="Encaissé ÷ nombre de reçus (FCFA).")
+
+
+class MethodTotalSerializer(serializers.Serializer):
+    method = serializers.CharField()
+    label = serializers.CharField()
+    total = serializers.IntegerField()
+    count = serializers.IntegerField()
+
+
+class TrendDaySerializer(serializers.Serializer):
+    date = serializers.DateField()
+    revenue = serializers.IntegerField()
+    orders_count = serializers.IntegerField()
+
+
+class TopDishSerializer(serializers.Serializer):
+    dish_id = serializers.IntegerField()
+    dish_name = serializers.CharField()
+    quantity = serializers.IntegerField()
+    revenue = serializers.IntegerField()
+
+
+class LiveSerializer(serializers.Serializer):
+    tables_total = serializers.IntegerField()
+    tables_open = serializers.IntegerField()
+    active_orders = serializers.IntegerField()
+    open_requests = serializers.IntegerField()
+    to_collect = serializers.IntegerField(help_text="Commandes non payées, hors annulations (FCFA).")
+    unavailable_dishes = serializers.ListField(child=serializers.CharField())
+
+
+class DashboardSerializer(serializers.Serializer):
+    period = serializers.ChoiceField(choices=["today", "week", "month"])
+    start = serializers.DateField()
+    end = serializers.DateField()
+    current = SalesSerializer()
+    previous = SalesSerializer(help_text="Période précédente de même durée.")
+    by_method = MethodTotalSerializer(many=True)
+    trend = TrendDaySerializer(many=True, help_text="Les 7 derniers jours, du plus ancien à aujourd'hui.")
+    top_dishes = TopDishSerializer(many=True)
+    live = LiveSerializer()
+
+
+# --- Paiements du jour ---
+
+class ReceiptRowSerializer(serializers.ModelSerializer):
+    """Ligne de la liste des paiements ; le détail (commandes, lignes) se lit sur /manage/receipts/{number}/."""
+
+    reference = serializers.CharField(read_only=True)
+    method_display = serializers.CharField(source="get_method_display", read_only=True)
+    table_number = serializers.IntegerField(source="session.table.number", read_only=True, default=None, allow_null=True)
+    cashier = serializers.SerializerMethodField()
+    orders_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Receipt
+        fields = ["number", "reference", "total", "method", "method_display", "transaction_ref", "paid_at",
+                  "table_number", "cashier", "orders_count"]
+
+    def get_cashier(self, receipt) -> str:
+        return (receipt.cashier.first_name or receipt.cashier.username) if receipt.cashier else ""
+
+
+class UnpaidTableSerializer(serializers.Serializer):
+    table_number = serializers.IntegerField(allow_null=True, help_text="Vide pour les commandes au comptoir.")
+    total = serializers.IntegerField()
+    orders_count = serializers.IntegerField()
+
+
+class ToCollectSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    tables = UnpaidTableSerializer(many=True)
+
+
+class PaymentsSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    revenue = serializers.IntegerField(help_text="Encaissé ce jour-là (FCFA).")
+    receipts_count = serializers.IntegerField()
+    by_method = MethodTotalSerializer(many=True, help_text="Les quatre moyens de paiement, même à zéro.")
+    to_collect = ToCollectSerializer(help_text="Commandes non payées à l'instant, toutes dates confondues.")
+    receipts = ReceiptRowSerializer(many=True)

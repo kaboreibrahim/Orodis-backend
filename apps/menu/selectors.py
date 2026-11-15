@@ -49,3 +49,10 @@ def featured_dishes():
         .select_related("subcategory__category")
         .prefetch_related(_option_groups())
     )
+
+
+def manage_menu():
+    """Toute la carte pour le gérant : éléments inactifs, plats en rupture et options indisponibles compris."""
+    dishes = Dish.objects.prefetch_related("option_groups__options")
+    subcategories = SubCategory.objects.prefetch_related(Prefetch("dishes", queryset=dishes))
+    return Category.objects.prefetch_related(Prefetch("subcategories", queryset=subcategories))

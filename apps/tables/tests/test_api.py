@@ -136,3 +136,48 @@ def test_planche_sans_table_active(as_role, table):
 def test_chevalet_d_une_seule_table(as_role, table):
     Table.objects.create(number=6, zone=table.zone)
     assert pages(as_role("manager").get(SHEET, {"number": 5}).content) == 1
+
+
+# --- Création en lot ----------------------------------------------------------------------------
+
+BULK = f"{TABLES}bulk/"
+
+
+@pytest.mark.parametrize("role, expected", [("manager", 201), ("cashier", 403), (None, 401)])
+def test_lot_reserve_au_gerant(as_role, salle, role, expected):
+    r = as_role(role).post(BULK, {"first": 13, "count": 2, "zone": salle.id}, format="json")
+    assert r.status_code == expected
+
+
+def test_lot_de_tables_avec_un_qr_chacune(as_role, salle):
+    r = as_role("manager").post(BULK, {"first": 13, "count": 4, "zone": salle.id, "seats": 6, "is_active": False}, format="json")
+    assert r.status_code == 201
+    assert [(t["number"], t["seats"], t["is_active"], t["zone_name"]) for t in r.json()] == [
+        (n, 6, False, "Salle") for n in (13, 14, 15, 16)]
+    assert len({t["qr_url"] for t in r.json()}) == 4 and all(t["id"] for t in r.json())
+
+
+def test_lot_refuse_en_entier_si_un_numero_est_pris(as_role, salle, table):
+    r = as_role("manager").post(BULK, {"first": 4, "count": 3, "zone": salle.id}, format="json")
+    assert r.status_code == 400 and "table 5 existe déjà" in r.json()["first"][0]
+    assert Table.objects.count() == 1  # ni la 4 ni la 6 n'ont été créées
+
+
+def test_lot_limite_a_trente_tables(as_role, salle):
+    assert as_role("manager").post(BULK, {"first": 1, "count": 31, "zone": salle.id}, format="json").status_code == 400
+
+
+# --- Suppression --------------------------------------------------------------------------------
+
+def test_supprimer_une_table_jamais_utilisee(as_role, table):
+    assert as_role("manager").delete(f"{TABLES}{table.id}/").status_code == 204
+    assert not Table.objects.exists()
+
+
+def test_table_deja_utilisee_non_supprimable(as_role, table):
+    from apps.orders.models import TableSession
+
+    TableSession.objects.create(table=table)
+    r = as_role("manager").delete(f"{TABLES}{table.id}/")
+    assert r.status_code == 400 and "Désactivez-la" in r.json()["detail"]
+    assert Table.objects.filter(pk=table.pk).exists()
