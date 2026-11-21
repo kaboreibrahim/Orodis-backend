@@ -263,14 +263,31 @@ class LiveSerializer(serializers.Serializer):
     unavailable_dishes = serializers.ListField(child=serializers.CharField())
 
 
+class HourSerializer(serializers.Serializer):
+    hour = serializers.IntegerField(help_text="Heure de la journée, 0 à 23 (heure d'Abidjan).")
+    orders_count = serializers.IntegerField()
+    amount = serializers.IntegerField(help_text="Montant commandé pendant cette heure (FCFA).")
+
+
+class CategorySalesSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    quantity = serializers.IntegerField()
+    revenue = serializers.IntegerField(help_text="Montant commandé (FCFA), hors annulations.")
+    share = serializers.FloatField(help_text="Part du montant commandé, en %.")
+
+
 class DashboardSerializer(serializers.Serializer):
-    period = serializers.ChoiceField(choices=["today", "week", "month"])
+    period = serializers.ChoiceField(choices=["today", "week", "month", "custom"])
     start = serializers.DateField()
     end = serializers.DateField()
+    days = serializers.IntegerField()
     current = SalesSerializer()
     previous = SalesSerializer(help_text="Période précédente de même durée.")
     by_method = MethodTotalSerializer(many=True)
-    trend = TrendDaySerializer(many=True, help_text="Les 7 derniers jours, du plus ancien à aujourd'hui.")
+    trend_unit = serializers.ChoiceField(choices=["day", "week"], help_text="day : un point par jour ; week : par semaine (lundi).")
+    trend = TrendDaySerializer(many=True, help_text="La période jour par jour (7 jours au moins), ou semaine par semaine au-delà de 62 jours.")
+    by_hour = HourSerializer(many=True, help_text="Les 24 heures de la journée, cumulées sur la période.")
+    by_category = CategorySalesSerializer(many=True)
     top_dishes = TopDishSerializer(many=True)
     live = LiveSerializer()
 

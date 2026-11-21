@@ -24,5 +24,8 @@ manage_urlpatterns = [
     path("events/", views.StaffEventsView.as_view(), name="manage-events"),
     path("dashboard/", views.StaffDashboardView.as_view(), name="manage-dashboard"),
     path("payments/", views.StaffPaymentsView.as_view(), name="manage-payments"),
+    path("reports/activity.pdf", views.ActivityReportView.as_view(), name="manage-report-activity"),
+    path("reports/sales.pdf", views.SalesReportView.as_view(), name="manage-report-sales"),
+    path("reports/closing.pdf", views.ClosingReportView.as_view(), name="manage-report-closing"),
     *router.urls,
 ]

@@ -62,7 +62,8 @@ def test_me_chaque_role(api, make_user, role, label):
     access = login(api, username=user.username).json()["access"]
     r = api.get(ME, HTTP_AUTHORIZATION=f"Bearer {access}")
     assert r.status_code == 200
-    assert r.json() == {"id": user.id, "username": role, "name": role, "role": role, "role_display": label}
+    assert r.json() == {"id": user.id, "username": role, "name": role, "role": role, "role_display": label,
+                        "must_change_password": False}
 
 
 def test_me_nom_complet(api, cashier):
@@ -105,3 +106,10 @@ def test_deconnexion_deux_fois(api, cashier):
     refresh = login(api).json()["refresh"]
     api.post(LOGOUT, {"refresh": refresh}, format="json")
     assert api.post(LOGOUT, {"refresh": refresh}, format="json").status_code == 400
+
+
+def test_connexion_enregistre_la_date(api, cashier):
+    assert cashier.last_login is None
+    login(api)
+    cashier.refresh_from_db()
+    assert cashier.last_login is not None

@@ -20,6 +20,10 @@ class User(TimeStampedModel, AbstractUser):
 
     role = models.CharField("rôle", max_length=20, choices=Role.choices, default=Role.WAITER)
     phone = models.CharField("téléphone", max_length=20, blank=True)
+    must_change_password = models.BooleanField(
+        "doit changer son mot de passe", default=False,
+        help_text="Mis à vrai quand le gérant crée le compte ou donne un mot de passe provisoire.",
+    )
 
     objects = UserManager()
 

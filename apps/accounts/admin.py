@@ -10,7 +10,7 @@ class UserAdmin(DjangoUserAdmin):
     list_filter = ["role", "is_active", "is_staff"]
     fieldsets = [
         *DjangoUserAdmin.fieldsets,
-        ("Restaurant", {"fields": ["role", "phone"]}),
+        ("Restaurant", {"fields": ["role", "phone", "must_change_password"]}),
     ]
     add_fieldsets = [
         *DjangoUserAdmin.add_fieldsets,

@@ -1,7 +1,7 @@
 import datetime as dt
 
-from django.db.models import Count, Q, Sum
-from django.db.models.functions import TruncDate
+from django.db.models import Count, F, Q, Sum
+from django.db.models.functions import ExtractHour, TruncDate, TruncWeek
 from django.utils import timezone
 
 from .models import Event, Order, OrderItem, Receipt, ServiceRequest, TableSession
@@ -94,12 +94,37 @@ def _events(condition, after):
 # --- Tableau de bord du gérant -----------------------------------------------------------------
 
 PERIOD_DAYS = {"today": 1, "week": 7, "month": 30}
-TREND_DAYS = 7
+MAX_RANGE_DAYS = 366
+DAILY_TREND_MAX = 62  # au-delà, la courbe passe à la semaine
+TREND_MIN_DAYS = 7    # pour une journée, la courbe montre quand même les 7 derniers jours
 TOP_DISHES = 5
+
+
+class PeriodError(ValueError):
+    """Période invalide ; le message est affiché tel quel."""
 
 
 def _day_start(day):
     return timezone.make_aware(dt.datetime.combine(day, dt.time.min))
+
+
+def period_bounds(period=None, start=None, end=None, today=None):
+    """(premier jour, dernier jour, nom) d'une période prédéfinie ou de dates libres, bornes comprises."""
+    today = today or timezone.localdate()
+    if start or end:
+        if not (start and end):
+            raise PeriodError("Indiquez la date de début et la date de fin.")
+        if start > end:
+            raise PeriodError("La date de début doit précéder la date de fin.")
+        if end > today:
+            raise PeriodError("La date de fin ne peut pas être dans le futur.")
+        if (end - start).days + 1 > MAX_RANGE_DAYS:
+            raise PeriodError("La période ne peut pas dépasser un an.")
+        return start, end, "custom"
+    period = period or "today"
+    if period not in PERIOD_DAYS:
+        raise PeriodError("Période inconnue : today, week ou month.")
+    return today - dt.timedelta(days=PERIOD_DAYS[period] - 1), today, period
 
 
 def _sales(start, end):
@@ -115,14 +140,62 @@ def _sales(start, end):
     }
 
 
-def dashboard(period="today", today=None):
-    """Vue d'ensemble : la période demandée et la précédente de même durée, les 7 derniers jours,
-    les moyens de paiement, les plats les plus vendus et l'état de la salle à l'instant.
+def _trend(first, last):
+    """Recettes et commandes jour par jour (au moins 7 jours), ou semaine par semaine au-delà de 62 jours."""
+    tz = timezone.get_current_timezone()
+    first = min(first, last - dt.timedelta(days=TREND_MIN_DAYS - 1))
+    days = (last - first).days + 1
+    weekly = days > DAILY_TREND_MAX
+    trunc = TruncWeek if weekly else TruncDate
+    start, end = _day_start(first), _day_start(last) + dt.timedelta(days=1)
+
+    def bucket(value):
+        return value.date() if isinstance(value, dt.datetime) else value
+
+    revenue = {bucket(k): v for k, v in Receipt.objects.filter(paid_at__gte=start, paid_at__lt=end)
+               .annotate(slot=trunc("paid_at", tzinfo=tz)).values("slot").annotate(total=Sum("total")).values_list("slot", "total")}
+    orders = {bucket(k): v for k, v in Order.objects.filter(created_at__gte=start, created_at__lt=end)
+              .exclude(status=Order.Status.CANCELLED)
+              .annotate(slot=trunc("created_at", tzinfo=tz)).values("slot").annotate(count=Count("id")).values_list("slot", "count")}
+    if weekly:
+        slots, monday = [], first - dt.timedelta(days=first.weekday())
+        while monday <= last:
+            slots.append(monday)
+            monday += dt.timedelta(days=7)
+    else:
+        slots = [first + dt.timedelta(days=n) for n in range(days)]
+    return "week" if weekly else "day", [
+        {"date": slot, "revenue": revenue.get(slot, 0), "orders_count": orders.get(slot, 0)} for slot in slots
+    ]
+
+
+def _by_hour(start, end):
+    """Commandes passées et montant commandé pour chaque heure de la journée (0 à 23), sur la période."""
+    tz = timezone.get_current_timezone()
+    rows = {row["hour"]: row for row in Order.objects.filter(created_at__gte=start, created_at__lt=end)
+            .exclude(status=Order.Status.CANCELLED)
+            .annotate(hour=ExtractHour("created_at", tzinfo=tz)).values("hour")
+            .annotate(count=Count("id"), amount=Sum("total"))}
+    return [{"hour": h, "orders_count": rows.get(h, {}).get("count", 0), "amount": rows.get(h, {}).get("amount", 0)}
+            for h in range(24)]
+
+
+def _by_category(items):
+    """Ventes par catégorie de la carte, de la plus forte à la plus faible, avec leur part du montant commandé."""
+    rows = list(items.values(name=F("dish__subcategory__category__name"))
+                .annotate(quantity=Sum("quantity"), revenue=Sum("line_total")).order_by("-revenue", "name"))
+    total = sum(row["revenue"] for row in rows) or 1
+    return [{**row, "share": round(row["revenue"] * 100 / total, 1)} for row in rows]
+
+
+def dashboard(period="today", today=None, start=None, end=None):
+    """Vue d'ensemble : la période demandée et la précédente de même durée, la courbe des recettes,
+    l'affluence par heure, les moyens de paiement, les catégories, les plats les plus vendus et l'état de la salle.
     Les recettes sont comptées au jour de l'encaissement, les commandes au jour où elles sont passées."""
-    today = today or timezone.localdate()
-    days = PERIOD_DAYS[period]
-    end = _day_start(today) + dt.timedelta(days=1)
-    start = end - dt.timedelta(days=days)
+    first, last, period = period_bounds(period, start, end, today)
+    days = (last - first).days + 1
+    start = _day_start(first)
+    end = _day_start(last) + dt.timedelta(days=1)
 
     receipts = Receipt.objects.filter(paid_at__gte=start, paid_at__lt=end)
     labels = dict(Order.PaymentMethod.choices)
@@ -130,25 +203,10 @@ def dashboard(period="today", today=None):
         {"method": row["method"], "label": labels.get(row["method"], row["method"]), "total": row["total"], "count": row["count"]}
         for row in receipts.values("method").annotate(total=Sum("total"), count=Count("id")).order_by("-total")
     ]
-
-    trend_start = end - dt.timedelta(days=TREND_DAYS)
-    tz = timezone.get_current_timezone()
-    revenue_by_day = dict(Receipt.objects.filter(paid_at__gte=trend_start, paid_at__lt=end)
-                          .annotate(day=TruncDate("paid_at", tzinfo=tz)).values("day")
-                          .annotate(total=Sum("total")).values_list("day", "total"))
-    orders_by_day = dict(Order.objects.filter(created_at__gte=trend_start, created_at__lt=end)
-                         .exclude(status=Order.Status.CANCELLED)
-                         .annotate(day=TruncDate("created_at", tzinfo=tz)).values("day")
-                         .annotate(count=Count("id")).values_list("day", "count"))
-    trend = []
-    for offset in range(TREND_DAYS - 1, -1, -1):
-        day = today - dt.timedelta(days=offset)
-        trend.append({"date": day, "revenue": revenue_by_day.get(day, 0), "orders_count": orders_by_day.get(day, 0)})
-
+    trend_unit, trend = _trend(first, last)
+    items = OrderItem.objects.filter(order__created_at__gte=start, order__created_at__lt=end).exclude(order__status=Order.Status.CANCELLED)
     top_dishes = list(
-        OrderItem.objects.filter(order__created_at__gte=start, order__created_at__lt=end)
-        .exclude(order__status=Order.Status.CANCELLED)
-        .values("dish_id", "dish_name").annotate(quantity=Sum("quantity"), revenue=Sum("line_total"))
+        items.values("dish_id", "dish_name").annotate(quantity=Sum("quantity"), revenue=Sum("line_total"))
         .order_by("-quantity", "-revenue", "dish_name")[:TOP_DISHES]
     )
 
@@ -158,12 +216,16 @@ def dashboard(period="today", today=None):
     unpaid = Order.objects.filter(receipt__isnull=True).exclude(status=Order.Status.CANCELLED)
     return {
         "period": period,
-        "start": start.astimezone(tz).date(),
-        "end": today,
+        "start": first,
+        "end": last,
+        "days": days,
         "current": _sales(start, end),
         "previous": _sales(start - dt.timedelta(days=days), start),
         "by_method": by_method,
+        "trend_unit": trend_unit,
         "trend": trend,
+        "by_hour": _by_hour(start, end),
+        "by_category": _by_category(items),
         "top_dishes": top_dishes,
         "live": {
             "tables_total": Table.objects.filter(is_active=True).count(),

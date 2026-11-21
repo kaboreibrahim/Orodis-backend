@@ -8,3 +8,5 @@ db.sqlite3
 .pytest_cache/
 .ruff_cache/
 .coverage
+.history/
+.claude/settings.local.json

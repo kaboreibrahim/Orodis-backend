@@ -78,3 +78,91 @@ def test_route_reservee_au_gerant(service_du_jour, staff):
     response = staff_api(staff["manager"]).get("/api/v1/manage/dashboard/?period=month")
     assert response.status_code == 200 and response.data["current"]["revenue"] == 16000
     assert staff_api(staff["manager"]).get("/api/v1/manage/dashboard/?period=annee").status_code == 400
+
+
+# --- Dates libres, affluence, catégories ---------------------------------------------------------
+
+def test_dates_libres(service_du_jour):
+    today = timezone.localdate()
+    data = selectors.dashboard(start=today - dt.timedelta(days=1), end=today - dt.timedelta(days=1))
+    assert data["period"] == "custom" and data["days"] == 1
+    assert data["current"]["revenue"] == 3500 and data["current"]["orders_count"] == 1
+    # la courbe montre quand même 7 jours, jusqu'au dernier jour demandé
+    assert data["trend"][-1]["date"] == today - dt.timedelta(days=1) and len(data["trend"]) == 7
+
+
+def test_longue_periode_par_semaine(service_du_jour):
+    today = timezone.localdate()
+    data = selectors.dashboard(start=today - dt.timedelta(days=99), end=today)
+    assert data["trend_unit"] == "week" and all(t["date"].weekday() == 0 for t in data["trend"])
+    assert sum(t["revenue"] for t in data["trend"]) == 16000
+
+
+@pytest.mark.parametrize("start, end, message", [
+    (1, None, "début et la date de fin"),
+    (0, 2, "précéder"),
+    (0, -1, "futur"),
+    (400, 0, "un an"),
+])
+def test_dates_libres_refusees(start, end, message):
+    today = timezone.localdate()
+    first = today - dt.timedelta(days=start) if start is not None else None
+    last = (today - dt.timedelta(days=end)) if end is not None else None
+    with pytest.raises(selectors.PeriodError, match=message):
+        selectors.period_bounds(start=first, end=last)
+
+
+def test_affluence_par_heure(service_du_jour):
+    hours = selectors.dashboard("today")["by_hour"]
+    assert [h["hour"] for h in hours] == list(range(24))
+    assert sum(h["orders_count"] for h in hours) == 3 and sum(h["amount"] for h in hours) == 17000
+
+
+def test_ventes_par_categorie(service_du_jour, menu):
+    data = selectors.dashboard("today")["by_category"]
+    assert sum(c["revenue"] for c in data) == 17000
+    assert round(sum(c["share"] for c in data)) == 100
+    assert data == sorted(data, key=lambda c: -c["revenue"])
+
+
+def test_route_avec_dates_libres(service_du_jour, staff):
+    today = timezone.localdate().isoformat()
+    api = staff_api(staff["manager"])
+    r = api.get(f"/api/v1/manage/dashboard/?start={today}&end={today}")
+    assert r.status_code == 200 and r.data["period"] == "custom" and len(r.data["by_hour"]) == 24
+    assert api.get("/api/v1/manage/dashboard/?start=2026-13-01&end=2026-12-01").status_code == 400
+
+
+# --- Rapports PDF ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url", [
+    "/api/v1/manage/reports/activity.pdf?period=week",
+    "/api/v1/manage/reports/sales.pdf?period=month",
+    "/api/v1/manage/reports/closing.pdf",
+])
+def test_rapports_pdf(service_du_jour, staff, url):
+    r = staff_api(staff["manager"]).get(url)
+    assert r.status_code == 200 and r["Content-Type"] == "application/pdf"
+    assert r.content.startswith(b"%PDF") and "attachment" in r["Content-Disposition"]
+
+
+def test_rapports_vides(staff, db):
+    api = staff_api(staff["manager"])
+    for url in ("activity.pdf?period=today", "sales.pdf?period=today", "closing.pdf"):
+        assert api.get(f"/api/v1/manage/reports/{url}").content.startswith(b"%PDF")
+
+
+def test_droits_des_rapports(service_du_jour, staff):
+    caisse = staff_api(staff["cashier"])
+    assert caisse.get("/api/v1/manage/reports/closing.pdf").status_code == 200
+    assert caisse.get("/api/v1/manage/reports/activity.pdf").status_code == 403
+    assert caisse.get("/api/v1/manage/reports/sales.pdf").status_code == 403
+    assert staff_api(staff["kitchen"]).get("/api/v1/manage/reports/closing.pdf").status_code == 403
+    demain = (timezone.localdate() + dt.timedelta(days=1)).isoformat()
+    assert caisse.get(f"/api/v1/manage/reports/closing.pdf?date={demain}").status_code == 400
+
+
+def test_nom_du_fichier(service_du_jour, staff):
+    today = timezone.localdate()
+    r = staff_api(staff["manager"]).get(f"/api/v1/manage/reports/sales.pdf?start={today}&end={today}")
+    assert f'orodis-ventes-{today:%Y-%m-%d}.pdf' in r["Content-Disposition"]

@@ -1,12 +1,13 @@
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django_filters import rest_framework as filters
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -15,7 +16,7 @@ from rest_framework.views import APIView
 from apps.core.permissions import HasRole, IsManager, IsStaffRole
 from apps.tables.models import Table
 
-from . import printing, selectors, services
+from . import printing, reports, selectors, services
 from .authentication import HasTableSession, TableEventsThrottle, TableSessionAuthentication, TableSessionThrottle
 from .models import Order, ServiceRequest, TableSession
 from .serializers import (
@@ -279,18 +280,46 @@ class StaffReceiptPdfView(StaffReceiptView):
         return _pdf_response(_receipt_or_404(number))
 
 
+PERIOD_PARAMETERS = [
+    OpenApiParameter("period", str, enum=list(selectors.PERIOD_DAYS), description="today (défaut), week (7 jours) ou month (30 jours)."),
+    OpenApiParameter("start", OpenApiTypes.DATE, description="Dates libres : premier jour (AAAA-MM-JJ), avec end ; remplace period."),
+    OpenApiParameter("end", OpenApiTypes.DATE, description="Dates libres : dernier jour compris (AAAA-MM-JJ)."),
+]
+
+
+def _date(raw):
+    """AAAA-MM-JJ → date ; None si le texte n'est pas une date valable (y compris « 2026-13-01 »)."""
+    try:
+        return parse_date(raw)
+    except ValueError:
+        return None
+
+
+def period_from(request):
+    """(premier jour, dernier jour, nom) depuis ?period= ou ?start=&end= ; lève ValidationError sinon."""
+    params = request.query_params
+    dates = {}
+    for key in ("start", "end"):
+        raw = params.get(key)
+        dates[key] = _date(raw) if raw else None
+        if raw and dates[key] is None:
+            raise ValidationError({key: ["Date attendue au format AAAA-MM-JJ."]})
+    try:
+        return selectors.period_bounds(params.get("period"), dates["start"], dates["end"])
+    except selectors.PeriodError as error:
+        raise ValidationError({"period": [str(error)]}) from error
+
+
 class StaffDashboardView(APIView):
-    """Vue d'ensemble du gérant : chiffres de la période, 7 derniers jours, état de la salle."""
+    """Vue d'ensemble du gérant : chiffres de la période, courbe, affluence, catégories, état de la salle."""
 
     permission_classes = [IsManager]
 
-    @extend_schema(parameters=[OpenApiParameter("period", str, enum=list(selectors.PERIOD_DAYS), description="today (défaut), week (7 jours) ou month (30 jours).")],
-                   responses=DashboardSerializer, summary="Tableau de bord du gérant")
+    @extend_schema(parameters=PERIOD_PARAMETERS, responses=DashboardSerializer, summary="Tableau de bord du gérant")
     def get(self, request):
-        period = request.query_params.get("period", "today")
-        if period not in selectors.PERIOD_DAYS:
-            return Response({"period": ["Période inconnue : today, week ou month."]}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(DashboardSerializer(selectors.dashboard(period)).data)
+        first, last, period = period_from(request)
+        return Response(DashboardSerializer(selectors.dashboard(period, start=first if period == "custom" else None,
+                                                                end=last if period == "custom" else None)).data)
 
 
 class StaffPaymentsView(APIView):
@@ -302,7 +331,61 @@ class StaffPaymentsView(APIView):
                    responses=PaymentsSerializer, summary="Paiements du jour (caisse, gérant)")
     def get(self, request):
         raw = request.query_params.get("date")
-        day = parse_date(raw) if raw else None
+        day = _date(raw) if raw else None
         if raw and day is None:
             return Response({"date": ["Date attendue au format AAAA-MM-JJ."]}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentsSerializer(selectors.payments(day)).data)
+
+
+# --- Rapports PDF -----------------------------------------------------------------------------
+
+def _author(user):
+    return user.get_full_name() or user.username
+
+
+def _report_response(content, filename):
+    response = HttpResponse(content, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+PDF = {(200, "application/pdf"): OpenApiTypes.BINARY}
+
+
+class ActivityReportView(APIView):
+    """Rapport d'activité de la période (mêmes paramètres que le tableau de bord)."""
+
+    permission_classes = [IsManager]
+
+    @extend_schema(parameters=PERIOD_PARAMETERS, responses=PDF, summary="Rapport d'activité (PDF)")
+    def get(self, request):
+        first, last, _ = period_from(request)
+        return _report_response(reports.summary_pdf(first, last, _author(request.user)), reports.pdf_filename("rapport", first, last))
+
+
+class SalesReportView(APIView):
+    """Liste détaillée des ventes : chaque reçu de la période et ses plats."""
+
+    permission_classes = [IsManager]
+
+    @extend_schema(parameters=PERIOD_PARAMETERS, responses=PDF, summary="Liste des ventes (PDF)")
+    def get(self, request):
+        first, last, _ = period_from(request)
+        return _report_response(reports.sales_pdf(first, last, _author(request.user)), reports.pdf_filename("ventes", first, last))
+
+
+class ClosingReportView(APIView):
+    """Clôture de caisse d'une journée : encaissé par moyen, reçus, annulations, comptage et signatures."""
+
+    permission_classes = [HasRole("cashier", "manager")]
+
+    @extend_schema(parameters=[OpenApiParameter("date", OpenApiTypes.DATE, description="Jour voulu (AAAA-MM-JJ), aujourd'hui par défaut.")],
+                   responses=PDF, summary="Clôture de caisse (PDF)")
+    def get(self, request):
+        raw = request.query_params.get("date")
+        day = _date(raw) if raw else timezone.localdate()
+        if day is None:
+            raise ValidationError({"date": ["Date attendue au format AAAA-MM-JJ."]})
+        if day > timezone.localdate():
+            raise ValidationError({"date": ["La date ne peut pas être dans le futur."]})
+        return _report_response(reports.closing_pdf(day, _author(request.user)), reports.pdf_filename("cloture", day, day))

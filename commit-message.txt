@@ -1,0 +1,15 @@
+Espace du personnel : comptes, carte, tables, tableau de bord et rapports PDF
+
+- Comptes du personnel : création, attribution des rôles, réinitialisation
+  du mot de passe et mot de passe provisoire à changer (migration 0002)
+- Carte & menus : gestion des catégories, sous-catégories et plats, ordre
+  d'affichage, options et photos (/manage/menu/)
+- Tables : création par plage de numéros, suppression protégée
+- Tableau de bord : période libre, tendance par jour ou par semaine,
+  affluence par heure, ventes par catégorie ; liste des paiements du jour
+- Rapports PDF : rapport de période, liste détaillée des ventes,
+  clôture de caisse
+- Tests associés
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016efViy2qoXUrkRPXUnmuEm

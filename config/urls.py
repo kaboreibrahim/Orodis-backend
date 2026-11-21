@@ -4,6 +4,7 @@ from django.urls import include, path, re_path
 from django.views.static import serve
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
+from apps.accounts.urls import manage_urlpatterns as accounts_manage
 from apps.catering.urls import manage_urlpatterns as catering_manage
 from apps.catering.urls import public_urlpatterns as catering_public
 from apps.core.views import HealthCheckView, PublicSettingsView
@@ -27,6 +28,7 @@ api_v1 = [
     path("manage/", include(reservations_manage)),
     path("catering/", include(catering_public)),
     path("manage/", include(catering_manage)),
+    path("manage/", include(accounts_manage)),
 ]
 
 urlpatterns = [
